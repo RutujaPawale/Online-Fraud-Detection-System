@@ -1,0 +1,2 @@
+# Directory to store raw and processed IEEE-CIS datasets
+# train_transaction.csv, train_identity.csv, test_transaction.csv, test_identity.csv

@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: fraud-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: fraud_detection_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fraud_detection_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ml-service:
+    build:
+      context: ./ml-service
+      dockerfile: Dockerfile
+    container_name: fraud-ml-service
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - PROJECT_NAME=Fraud Detection ML Service
+      - MODEL_VERSION=v0.1.0-baseline
+      - LOW_RISK_THRESHOLD=0.30
+      - HIGH_RISK_THRESHOLD=0.75
+    volumes:
+      - ./ml-service/models:/app/models
+      - ./ml-service/data:/app/data
+
+  api-service:
+    build:
+      context: ./api-service
+      dockerfile: Dockerfile
+    container_name: fraud-api-service
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=fraud_detection_db
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - ML_SERVICE_URL=http://ml-service:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ml-service:
+        condition: service_started
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: fraud-dashboard
+    restart: always
+    ports:
+      - "5173:80"
+    depends_on:
+      - api-service
+
+volumes:
+  postgres_data:
