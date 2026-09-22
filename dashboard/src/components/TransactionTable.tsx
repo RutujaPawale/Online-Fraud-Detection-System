@@ -28,6 +28,13 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
     return tx.status === selectedStatusFilter;
   });
 
+  // Default sort: descending by creation timestamp (most recent transactions at the top)
+  const sortedAndFiltered = [...filtered].sort((a, b) => {
+    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return timeB - timeA;
+  });
+
   const getStatusBadge = (status: DecisionStatus) => {
     switch (status) {
       case 'APPROVE':
@@ -146,14 +153,14 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 ? (
+            {sortedAndFiltered.length === 0 ? (
               <tr>
                 <td colSpan={8} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
                   No transactions found matching criteria.
                 </td>
               </tr>
             ) : (
-              filtered.map((tx) => (
+              sortedAndFiltered.map((tx) => (
                 <tr
                   key={tx.id}
                   style={{
@@ -164,7 +171,21 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
                   onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                 >
                   <td style={{ padding: '0.85rem 1.25rem', fontWeight: '600', color: '#E2E8F0' }}>
-                    {tx.transactionRef}
+                    <div>{tx.transactionRef}</div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: '400', marginTop: '0.2rem' }}>
+                      {tx.createdAt
+                        ? new Date(tx.createdAt).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                          }) +
+                          ' · ' +
+                          new Date(tx.createdAt).toLocaleDateString([], {
+                            month: 'short',
+                            day: 'numeric',
+                          })
+                        : 'N/A'}
+                    </div>
                   </td>
                   <td style={{ padding: '0.85rem 1rem' }}>
                     <div style={{ color: '#F1F5F9' }}>{tx.userId}</div>
