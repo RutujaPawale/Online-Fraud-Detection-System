@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -80,29 +81,50 @@ public class TransactionService {
             decision = DecisionStatus.FLAGGED;
         }
 
-        // 4. Persist Transaction
-        TransactionEntity transaction = TransactionEntity.builder()
-                .transactionRef(request.getTransactionRef())
-                .userId(request.getUserId())
-                .amount(request.getAmount())
-                .currency(request.getCurrency() != null ? request.getCurrency() : "USD")
-                .productCd(request.getProductCd())
-                .card1(request.getCard1())
-                .card2(request.getCard2())
-                .card3(request.getCard3())
-                .card4(request.getCard4())
-                .card5(request.getCard5())
-                .card6(request.getCard6())
-                .pEmailDomain(request.getPEmailDomain())
-                .rEmailDomain(request.getREmailDomain())
-                .deviceType(request.getDeviceType())
-                .deviceInfo(request.getDeviceInfo())
-                .status(decision)
-                .build();
+        // 4. Persist or update Transaction (Idempotent upsert)
+        TransactionEntity transaction = transactionRepository.findByTransactionRef(request.getTransactionRef())
+                .orElse(null);
+
+        if (transaction != null) {
+            transaction.setUserId(request.getUserId());
+            transaction.setAmount(request.getAmount());
+            transaction.setCurrency(request.getCurrency() != null ? request.getCurrency() : "USD");
+            transaction.setProductCd(request.getProductCd());
+            transaction.setCard1(request.getCard1());
+            transaction.setCard2(request.getCard2());
+            transaction.setCard3(request.getCard3());
+            transaction.setCard4(request.getCard4());
+            transaction.setCard5(request.getCard5());
+            transaction.setCard6(request.getCard6());
+            transaction.setPEmailDomain(request.getPEmailDomain());
+            transaction.setREmailDomain(request.getREmailDomain());
+            transaction.setDeviceType(request.getDeviceType());
+            transaction.setDeviceInfo(request.getDeviceInfo());
+            transaction.setStatus(decision);
+        } else {
+            transaction = TransactionEntity.builder()
+                    .transactionRef(request.getTransactionRef())
+                    .userId(request.getUserId())
+                    .amount(request.getAmount())
+                    .currency(request.getCurrency() != null ? request.getCurrency() : "USD")
+                    .productCd(request.getProductCd())
+                    .card1(request.getCard1())
+                    .card2(request.getCard2())
+                    .card3(request.getCard3())
+                    .card4(request.getCard4())
+                    .card5(request.getCard5())
+                    .card6(request.getCard6())
+                    .pEmailDomain(request.getPEmailDomain())
+                    .rEmailDomain(request.getREmailDomain())
+                    .deviceType(request.getDeviceType())
+                    .deviceInfo(request.getDeviceInfo())
+                    .status(decision)
+                    .build();
+        }
 
         transaction = transactionRepository.save(transaction);
 
-        // 5. Persist Fraud Assessment
+        // 5. Persist or update Fraud Assessment
         String riskFactorsJson = null;
         try {
             riskFactorsJson = objectMapper.writeValueAsString(scoreResponse.getRiskFactors());
@@ -110,27 +132,42 @@ public class TransactionService {
             log.warn("Could not serialize risk factors to JSON: {}", e.getMessage());
         }
 
-        FraudAssessmentEntity assessment = FraudAssessmentEntity.builder()
-                .transaction(transaction)
-                .fraudProbability(prob)
-                .decision(decision)
-                .riskLevel(scoreResponse.getRiskLevel() != null ? scoreResponse.getRiskLevel() : "MEDIUM")
-                .modelVersion(scoreResponse.getModelVersion() != null ? scoreResponse.getModelVersion() : "v0.1.0")
-                .riskFactors(riskFactorsJson)
-                .build();
+        FraudAssessmentEntity assessment = fraudAssessmentRepository.findByTransactionId(transaction.getId())
+                .orElse(null);
+
+        if (assessment != null) {
+            assessment.setFraudProbability(prob);
+            assessment.setDecision(decision);
+            assessment.setRiskLevel(scoreResponse.getRiskLevel() != null ? scoreResponse.getRiskLevel() : "MEDIUM");
+            assessment.setModelVersion(scoreResponse.getModelVersion() != null ? scoreResponse.getModelVersion() : "v1.0.0-trained");
+            assessment.setRiskFactors(riskFactorsJson);
+        } else {
+            assessment = FraudAssessmentEntity.builder()
+                    .transaction(transaction)
+                    .fraudProbability(prob)
+                    .decision(decision)
+                    .riskLevel(scoreResponse.getRiskLevel() != null ? scoreResponse.getRiskLevel() : "MEDIUM")
+                    .modelVersion(scoreResponse.getModelVersion() != null ? scoreResponse.getModelVersion() : "v1.0.0-trained")
+                    .riskFactors(riskFactorsJson)
+                    .build();
+        }
 
         assessment = fraudAssessmentRepository.save(assessment);
         transaction.setAssessment(assessment);
 
-        // 6. If FLAGGED, create human review case
-        ReviewCaseEntity reviewCase = null;
+        // 6. If FLAGGED, create or update human review case
+        ReviewCaseEntity reviewCase = reviewCaseRepository.findByTransactionId(transaction.getId()).orElse(null);
         if (decision == DecisionStatus.FLAGGED) {
-            reviewCase = ReviewCaseEntity.builder()
-                    .transaction(transaction)
-                    .reviewStatus(ReviewStatus.PENDING)
-                    .analystNotes("Flagged automatically due to risk score between " + lowThreshold + " and " + highThreshold)
-                    .build();
-            reviewCase = reviewCaseRepository.save(reviewCase);
+            if (reviewCase == null) {
+                reviewCase = ReviewCaseEntity.builder()
+                        .transaction(transaction)
+                        .reviewStatus(ReviewStatus.PENDING)
+                        .analystNotes("Flagged automatically due to risk score between " + lowThreshold + " and " + highThreshold)
+                        .build();
+                reviewCase = reviewCaseRepository.save(reviewCase);
+            }
+            transaction.setReviewCase(reviewCase);
+        } else if (reviewCase != null) {
             transaction.setReviewCase(reviewCase);
         }
 
